@@ -42,7 +42,7 @@ struct ProgramParsingState {
     json_set: bool,
     dry_run_set: bool,
     dev_inspect_set: bool,
-    gas_object_id: Option<Spanned<ObjectID>>,
+    gas_object_id: Vec<Spanned<ObjectID>>,
     gas_budget: Option<Spanned<u64>>,
 }
 
@@ -65,7 +65,7 @@ impl<'a, I: Iterator<Item = &'a str>> ProgramParser<'a, I> {
                 json_set: false,
                 dry_run_set: false,
                 dev_inspect_set: false,
-                gas_object_id: None,
+                gas_object_id: Vec::new(),
                 gas_budget: None,
             },
         })
@@ -117,7 +117,7 @@ impl<'a, I: Iterator<Item = &'a str>> ProgramParser<'a, I> {
                 L(T::Command, A::WARN_SHADOWS) => flag!(warn_shadows_set),
                 L(T::Command, A::GAS_COIN) => {
                     let specifier = try_!(self.parse_gas_specifier());
-                    self.state.gas_object_id = Some(specifier);
+                    self.state.gas_object_id.push(specifier);
                 }
                 L(T::Command, A::GAS_BUDGET) => {
                     let budget = try_!(self.parse_gas_budget()).widen_span(sp);
@@ -141,6 +141,7 @@ impl<'a, I: Iterator<Item = &'a str>> ProgramParser<'a, I> {
                 L(T::Command, A::ASSIGN) => command!(self.parse_assign()),
                 L(T::Command, A::MAKE_MOVE_VEC) => command!(self.parse_make_move_vec()),
                 L(T::Command, A::MOVE_CALL) => command!(self.parse_move_call()),
+                L(T::Command, A::PUBLISH_AND_CALL) => command!(self.parse_publish_and_call()),
 
                 L(T::Publish, src) => command!({
                     let src = sp.wrap(src.to_owned());
@@ -359,6 +360,49 @@ impl<'a, I: Iterator<Item = &'a str>> ProgramParser<'a, I> {
         Ok(sp.wrap(ParsedPTBCommand::MoveCall(function, ty_args, args)))
     }
 
+    /// Parse a publish-and-call command.
+    /// The expected format is: `--publish-and-call` <package-path> <owner> <module-access> [<type>1, <type>2, ...] <arg1> <arg2> ...
+    fn parse_publish_and_call(&mut self) -> PTBResult<Spanned<ParsedPTBCommand>> {
+        use super::token::{Lexeme as L, Token as T};
+
+        // First parse the package path
+        let package_path = match self.parse_argument()? {
+            sp!(sp, Argument::String(s)) => sp.wrap(s),
+            sp!(sp, Argument::Identifier(s)) => sp.wrap(s),
+            sp!(sp, _) => error!(sp, "Expected a path to a Move package"),
+        };
+
+        let owner = self.parse_argument()?;
+
+        // Then parse the function call (similar to parse_move_call)
+        let function = self.parse_module_access()?;
+        let mut end_sp = function.span;
+
+        let ty_args = if let sp!(_, L(T::LAngle, _)) = self.peek() {
+            let type_args = self.parse_type_args()?;
+            end_sp = type_args.span;
+            Some(type_args)
+        } else {
+            None
+        };
+
+        let mut args = vec![];
+        while !self.peek().value.is_command_end() {
+            let arg = self.parse_argument()?;
+            end_sp = arg.span;
+            args.push(arg);
+        }
+
+        let sp = package_path.span.widen(end_sp);
+        Ok(sp.wrap(ParsedPTBCommand::PublishAndCall(
+            package_path,
+            owner,
+            function,
+            ty_args,
+            args,
+        )))
+    }
+
     /// Parse a gas-budget command.
     /// The expected format is: `--gas-budget <u64>`
     fn parse_gas_budget(&mut self) -> PTBResult<Spanned<u64>> {
@@ -441,6 +485,11 @@ impl<'a, I: Iterator<Item = &'a str>> ProgramParser<'a, I> {
             L(T::Ident, _) => self.parse_variable()?,
 
             L(T::String, contents) => {
+                self.bump();
+                sp.wrap(V::String(contents.to_owned()))
+            }
+
+            L(T::Dot, contents) => {
                 self.bump();
                 sp.wrap(V::String(contents.to_owned()))
             }

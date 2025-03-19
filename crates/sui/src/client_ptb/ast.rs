@@ -39,6 +39,7 @@ pub const DRY_RUN: &str = "dry-run";
 pub const DEV_INSPECT: &str = "dev-inspect";
 pub const SERIALIZE_UNSIGNED: &str = "serialize-unsigned-transaction";
 pub const SERIALIZE_SIGNED: &str = "serialize-signed-transaction";
+pub const PUBLISH_AND_CALL: &str = "publish-and-call";
 
 // Types
 pub const U8: &str = "u8";
@@ -79,6 +80,7 @@ pub const COMMANDS: &[&str] = &[
     DEV_INSPECT,
     SERIALIZE_UNSIGNED,
     SERIALIZE_SIGNED,
+    PUBLISH_AND_CALL,
 ];
 
 pub fn is_keyword(s: &str) -> bool {
@@ -111,7 +113,7 @@ pub struct ProgramMetadata {
     pub summary_set: bool,
     pub serialize_unsigned_set: bool,
     pub serialize_signed_set: bool,
-    pub gas_object_id: Option<Spanned<ObjectID>>,
+    pub gas_object_id: Vec<Spanned<ObjectID>>,
     pub json_set: bool,
     pub dry_run_set: bool,
     pub dev_inspect_set: bool,
@@ -143,6 +145,13 @@ pub enum ParsedPTBCommand {
     Upgrade(Spanned<String>, Spanned<Argument>),
     WarnShadows,
     Preview,
+    PublishAndCall(
+        Spanned<String>,
+        Spanned<Argument>,
+        Spanned<ModuleAccess>,
+        Option<Spanned<Vec<ParsedType>>>,
+        Vec<Spanned<Argument>>,
+    ),
 }
 
 /// An enum representing the parsed arguments of a PTB command.
@@ -431,6 +440,11 @@ impl fmt::Display for ParsedPTBCommand {
                 tys,
                 args,
             ) => {
+                write!(
+                    f,
+                    "{MOVE_CALL} {}::{}::{}",
+                    address.value, module_name.value, function_name.value
+                )?;
                 let type_args = |f: &mut std::fmt::Formatter| match tys {
                     Some(tys) => {
                         write!(f, "<")?;
@@ -439,11 +453,46 @@ impl fmt::Display for ParsedPTBCommand {
                     }
                     None => Ok(()),
                 };
+                type_args(f)?;
+
+                if !args.is_empty() {
+                    write!(f, " ")?;
+                }
+
+                delimited_list(f, " ", args.iter().map(|x| x.value.to_string()))
+            }
+            ParsedPTBCommand::PublishAndCall(
+                package_path,
+                owner,
+                sp!(
+                    _,
+                    ModuleAccess {
+                        address,
+                        module_name,
+                        function_name
+                    }
+                ),
+                tys,
+                args,
+            ) => {
                 write!(
                     f,
-                    "{MOVE_CALL} {}::{}::{}",
-                    address.value, module_name.value, function_name.value
+                    "publish-and-call {} {} {}::{}::{}",
+                    package_path.value,
+                    owner.value,
+                    address.value,
+                    module_name.value,
+                    function_name.value
                 )?;
+
+                let type_args = |f: &mut std::fmt::Formatter| match tys {
+                    Some(tys) => {
+                        write!(f, "<")?;
+                        delimited_list(f, ", ", tys.value.iter().map(TyDisplay))?;
+                        write!(f, ">")
+                    }
+                    None => Ok(()),
+                };
                 type_args(f)?;
 
                 if !args.is_empty() {

@@ -264,9 +264,18 @@ impl TryFromValue for ObjectValue {
     fn try_from_value(value: Value) -> Result<Self, CommandArgumentError> {
         match value {
             Value::Object(o) => Ok(o),
-            Value::Raw(RawValueType::Any, _) => Err(CommandArgumentError::TypeMismatch),
-            Value::Raw(RawValueType::Loaded { .. }, _) => Err(CommandArgumentError::TypeMismatch),
-            Value::Receiving(_, _, _) => Err(CommandArgumentError::TypeMismatch),
+            Value::Raw(RawValueType::Any, _) => {
+                println!("Cannot convert Raw(Any) to ObjectValue {:?}", value);
+                Err(CommandArgumentError::TypeMismatch)
+            }
+            Value::Raw(RawValueType::Loaded { .. }, _) => {
+                println!("Cannot convert Raw(Loaded) to ObjectValue {:?}", value);
+                Err(CommandArgumentError::TypeMismatch)
+            }
+            Value::Receiving(_, _, _) => {
+                println!("Cannot convert Receiving to ObjectValue {:?}", value);
+                Err(CommandArgumentError::TypeMismatch)
+            }
         }
     }
 }

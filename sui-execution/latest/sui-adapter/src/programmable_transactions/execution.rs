@@ -340,6 +340,18 @@ mod checked {
                     arguments,
                 } = *move_call;
 
+                // no need for extra flag, can't happen without testing feature in transaction
+                let is_zero = package == ObjectID::ZERO;
+                let package = if is_zero && !context.new_packages.is_empty() {
+                    let package_id = context.new_packages.last().unwrap().id();
+                    context
+                        .linkage_view
+                        .set_linkage(context.new_packages.last().unwrap())?;
+                    package_id
+                } else {
+                    package
+                };
+
                 let module = to_identifier(context, module)?;
                 let function = to_identifier(context, function)?;
 
@@ -364,7 +376,7 @@ mod checked {
                     &function,
                     loaded_type_arguments,
                     arguments,
-                    /* is_init */ false,
+                    /* is_init */ is_zero,
                     trace_builder_opt,
                 );
 

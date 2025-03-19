@@ -4,7 +4,8 @@
 use super::Node;
 use anyhow::Result;
 use futures::future::try_join_all;
-use rand::rngs::OsRng;
+use rand::rngs::{OsRng, StdRng};
+use rand::SeedableRng;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
@@ -424,7 +425,9 @@ impl<R: rand::RngCore + rand::CryptoRng> SwarmBuilder<R> {
                         builder = builder.with_rpc_port(rpc_port);
                     }
                 }
-                let config = builder.build(&mut OsRng, &network_config);
+                // use fixed rng for fullnode, that's temporary fix for https://github.com/MystenLabs/sui/issues/21149
+                let mut rng = StdRng::from_seed([0; 32]);
+                let config = builder.build(&mut rng, &network_config);
                 info!(
                     "SwarmBuilder configuring full node with name {}",
                     config.protocol_public_key()

@@ -126,15 +126,24 @@ impl PTB {
         };
 
         // get all the metadata needed for executing the PTB: sender, gas, signing tx
-        let gas = program_metadata.gas_object_id.map(|x| x.value);
+        let gas_objects = program_metadata
+            .gas_object_id
+            .iter()
+            .map(|x| x.value)
+            .collect::<Vec<_>>();
+        let gas = if !gas_objects.is_empty() {
+            Some(gas_objects)
+        } else {
+            None
+        };
 
         // the sender is the gas object if gas is provided, otherwise the active address
-        let sender = match gas {
-            Some(gas) => context
-                .get_object_owner(&gas)
+        let sender = match gas.as_ref() {
+            Some(gas_objects) if !gas_objects.is_empty() => context
+                .get_object_owner(&gas_objects[0])
                 .await
                 .map_err(|_| anyhow!("Could not find owner for gas object ID"))?,
-            None => context
+            _ => context
                 .config
                 .active_address
                 .ok_or_else(|| anyhow!("No active address, cannot execute PTB"))?,
@@ -147,20 +156,23 @@ impl PTB {
         });
 
         let opts = OptsWithGas {
-            gas: program_metadata.gas_object_id.map(|x| x.value),
+            gas: if !program_metadata.gas_object_id.is_empty() {
+                Some(program_metadata.gas_object_id[0].value)
+            } else {
+                None
+            },
             rest: Opts {
+                gas_budget: program_metadata.gas_budget.map(|x| x.value),
                 dry_run: program_metadata.dry_run_set,
                 dev_inspect: program_metadata.dev_inspect_set,
-                gas_budget: program_metadata.gas_budget.map(|x| x.value),
                 serialize_unsigned_transaction: program_metadata.serialize_unsigned_set,
                 serialize_signed_transaction: program_metadata.serialize_signed_set,
             },
         };
 
-        let transaction_response = dry_run_or_execute_or_serialize(
-            sender, tx_kind, context, None, None, opts.gas, opts.rest,
-        )
-        .await?;
+        let transaction_response =
+            dry_run_or_execute_or_serialize(sender, tx_kind, context, gas, None, None, opts.rest)
+                .await?;
 
         let transaction_response = match transaction_response {
             SuiClientCommandResult::DryRun(_) => {

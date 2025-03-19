@@ -16,7 +16,7 @@ use tabled::{
 
 impl Display for PTBPreview<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut builder = TableBuilder::default();
+        let mut builder = TableBuilder::new();
         let columns = vec!["command", "values"];
         builder.set_header(columns);
         for sp!(_, cmd) in &self.program.commands {
@@ -27,7 +27,7 @@ impl Display for PTBPreview<'_> {
         if let Some(gas_budget) = self.program_metadata.gas_budget {
             builder.push_record([GAS_BUDGET, gas_budget.value.to_string().as_str()]);
         }
-        if let Some(gas_coin_id) = self.program_metadata.gas_object_id {
+        for gas_coin_id in &self.program_metadata.gas_object_id {
             builder.push_record([GAS_COIN, gas_coin_id.value.to_string().as_str()]);
         }
         if self.program_metadata.json_set {

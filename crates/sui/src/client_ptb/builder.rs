@@ -30,7 +30,7 @@ use sui_json_rpc_types::{SuiObjectData, SuiObjectDataOptions, SuiRawData};
 use sui_move::manage_package::resolve_lock_file_path;
 use sui_sdk::apis::ReadApi;
 use sui_types::{
-    base_types::{is_primitive_type_tag, ObjectID, TxContext, TxContextKind},
+    base_types::{is_primitive_type_tag, ObjectID, SequenceNumber, TxContext, TxContextKind},
     move_package::MovePackage,
     object::Owner,
     programmable_transaction_builder::ProgrammableTransactionBuilder,
@@ -1084,6 +1084,142 @@ impl<'a> PTBBuilder<'a> {
             }
             ParsedPTBCommand::WarnShadows => {}
             ParsedPTBCommand::Preview => {}
+            ParsedPTBCommand::PublishAndCall(
+                sp!(pkg_loc, package_path),
+                owner,
+                sp!(
+                    mod_access_loc,
+                    PTBModuleAccess {
+                        address,
+                        module_name,
+                        function_name
+                    }
+                ),
+                in_ty_args,
+                args,
+            ) => {
+                // First, compile and publish the package
+                let chain_id = self.reader.get_chain_identifier().await.ok();
+                let build_config = BuildConfig::default();
+                let package_path = Path::new(&package_path);
+                let build_config = resolve_lock_file_path(build_config.clone(), Some(package_path))
+                    .map_err(|e| err!(pkg_loc, "{e}"))?;
+                let previous_id = if let Some(ref chain_id) = chain_id {
+                    sui_package_management::set_package_id(
+                        package_path,
+                        build_config.install_dir.clone(),
+                        chain_id,
+                        AccountAddress::ZERO,
+                    )
+                    .map_err(|e| err!(pkg_loc, "{e}"))?
+                } else {
+                    None
+                };
+                // Restore original ID, then check result.
+                if let (Some(chain_id), Some(previous_id)) = (chain_id, previous_id) {
+                    let _ = sui_package_management::set_package_id(
+                        package_path,
+                        build_config.install_dir.clone(),
+                        &chain_id,
+                        previous_id,
+                    )
+                    .map_err(|e| err!(pkg_loc, "{e}"))?;
+                }
+                let compiled_package = compile_package(
+                    self.reader,
+                    build_config.clone(),
+                    package_path,
+                    true, /* with_unpublished_dependencies */
+                    true, /* skip_dependency_verification */
+                )
+                .await
+                .map_err(|e| err!(pkg_loc, "{e}"))?;
+
+                let compiled_modules = compiled_package.get_package_bytes(false);
+
+                // Publish the package and get its ID
+                let res = self.ptb.publish_upgradeable(
+                    compiled_modules,
+                    compiled_package.get_published_dependencies_ids(),
+                );
+
+                // transfer package to caller
+                let to_arg = self.resolve(owner, ToPure::new(TypeTag::Address)).await?;
+                self.last_command = Some(
+                    self.ptb
+                        .command(Tx::Command::TransferObjects(vec![res], to_arg)),
+                );
+
+                // Now use the package to make a move call
+                // Use a placeholder address of 0x0 as we don't know the real address yet
+                let package_id = ObjectID::ZERO;
+
+                let mut ty_args = vec![];
+
+                if let Some(sp!(ty_loc, in_ty_args)) = in_ty_args {
+                    for t in in_ty_args.into_iter() {
+                        ty_args.push(
+                            t.into_type_tag(&resolve_address)
+                                .map_err(|e| err!(ty_loc, "{e}"))?,
+                        )
+                    }
+                }
+
+                let module_map = compiled_package
+                    .get_dependency_sorted_modules(false)
+                    .iter()
+                    .map(|m| {
+                        let mut bytes = Vec::new();
+                        m.serialize_with_version(m.version, &mut bytes).unwrap(); // safe because package built successfully
+                        (m.name().to_string(), bytes)
+                    })
+                    .collect();
+
+                // Process arguments directly
+                let move_package: MovePackage = MovePackage::new(
+                    package_id,
+                    SequenceNumber::new(),
+                    module_map,
+                    u64::MAX,
+                    vec![],
+                    BTreeMap::new(),
+                )
+                .unwrap();
+                let args = self
+                    .resolve_move_call_args(
+                        move_package,
+                        &module_name,
+                        &function_name,
+                        &ty_args,
+                        args,
+                        mod_access_loc,
+                    )
+                    .await?;
+
+                let resolved_address = address.value.clone().into_account_address(&|s| {
+                    self.addresses.get(s).cloned().or_else(|| resolve_address(s))
+                }).map_err(|e| {
+                    let e = err!(address.span, "{e}");
+                    if let ParsedAddress::Named(name) = address.value {
+                        e.with_help(
+                            format!("This is most likely because the named address '{name}' is not in scope. \
+                                     You can either bind a variable to the address that you want to use or use the address in the command."))
+                    } else {
+                        e
+                    }
+                })?;
+
+                // Make the move call with the placeholder package ID
+                let move_call_result = self.ptb.command(Tx::Command::move_call(
+                    ObjectID::from_address(resolved_address),
+                    module_name.value,
+                    function_name.value,
+                    ty_args,
+                    args,
+                ));
+
+                self.last_command = Some(move_call_result);
+            }
         }
         Ok(())
     }

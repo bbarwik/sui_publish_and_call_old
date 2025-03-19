@@ -172,6 +172,7 @@ mod checked {
             use ExecutionErrorKind as K;
             match error.kind() {
                 K::InvariantViolation | K::VMInvariantViolation => {
+                    println!("Error {error:?}");
                     #[skip_checked_arithmetic]
                     tracing::error!(
                         kind = ?error.kind(),
@@ -182,6 +183,7 @@ mod checked {
                 }
 
                 K::SuiMoveVerificationError | K::VMVerificationOrDeserializationError => {
+                    println!("Error {error:?}");
                     #[skip_checked_arithmetic]
                     tracing::debug!(
                         kind = ?error.kind(),
@@ -192,6 +194,7 @@ mod checked {
                 }
 
                 K::PublishUpgradeMissingDependency | K::PublishUpgradeDependencyDowngrade => {
+                    println!("Error {error:?}");
                     #[skip_checked_arithmetic]
                     tracing::debug!(
                         kind = ?error.kind(),
@@ -336,6 +339,9 @@ mod checked {
                             vec![],
                         ))
                     } else if contains_deleted_input {
+                        // print stacktrace here
+                        let stacktrace = std::backtrace::Backtrace::capture();
+                        println!("Stacktrace: {stacktrace:?}");
                         Err((
                             ExecutionError::new(ExecutionErrorKind::InputObjectDeleted, None),
                             vec![],

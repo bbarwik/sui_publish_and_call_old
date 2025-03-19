@@ -55,39 +55,46 @@ pub(crate) fn convert_vm_error<S: MoveResolver<Err = SuiError>>(
             )
         }
         (StatusCode::OUT_OF_GAS, _, _) => ExecutionFailureStatus::InsufficientGas,
-        (_, _, location) => match error.major_status().status_type() {
-            StatusType::Execution => {
-                debug_assert!(error.major_status() != StatusCode::ABORTED);
-                let location = match location {
-                    Location::Module(id) => {
-                        let offset = error.offsets().first().copied().map(|(f, i)| (f.0, i));
-                        debug_assert!(
+        (_, _, location) => {
+            println!("Error {error:?}");
+
+            match error.major_status().status_type() {
+                StatusType::Execution => {
+                    debug_assert!(error.major_status() != StatusCode::ABORTED);
+                    let location = match location {
+                        Location::Module(id) => {
+                            let offset = error.offsets().first().copied().map(|(f, i)| (f.0, i));
+                            debug_assert!(
                             offset.is_some(),
                             "Move should set the location on all execution errors. Error {error}"
                         );
-                        let (function, instruction) = offset.unwrap_or((0, 0));
-                        let function_name = vm.load_module(id, state_view).ok().map(|module| {
-                            let fdef = module.function_def_at(FunctionDefinitionIndex(function));
-                            let fhandle = module.function_handle_at(fdef.function);
-                            module.identifier_at(fhandle.name).to_string()
-                        });
-                        Some(MoveLocation {
-                            module: id.clone(),
-                            function,
-                            instruction,
-                            function_name,
-                        })
-                    }
-                    _ => None,
-                };
-                ExecutionFailureStatus::MovePrimitiveRuntimeError(MoveLocationOpt(location))
+                            let (function, instruction) = offset.unwrap_or((0, 0));
+                            let function_name = vm.load_module(id, state_view).ok().map(|module| {
+                                let fdef =
+                                    module.function_def_at(FunctionDefinitionIndex(function));
+                                let fhandle = module.function_handle_at(fdef.function);
+                                module.identifier_at(fhandle.name).to_string()
+                            });
+                            Some(MoveLocation {
+                                module: id.clone(),
+                                function,
+                                instruction,
+                                function_name,
+                            })
+                        }
+                        _ => None,
+                    };
+                    ExecutionFailureStatus::MovePrimitiveRuntimeError(MoveLocationOpt(location))
+                }
+                StatusType::Validation
+                | StatusType::Verification
+                | StatusType::Deserialization
+                | StatusType::Unknown => {
+                    ExecutionFailureStatus::VMVerificationOrDeserializationError
+                }
+                StatusType::InvariantViolation => ExecutionFailureStatus::VMInvariantViolation,
             }
-            StatusType::Validation
-            | StatusType::Verification
-            | StatusType::Deserialization
-            | StatusType::Unknown => ExecutionFailureStatus::VMVerificationOrDeserializationError,
-            StatusType::InvariantViolation => ExecutionFailureStatus::VMInvariantViolation,
-        },
+        }
     };
     ExecutionError::new_with_source(kind, error)
 }

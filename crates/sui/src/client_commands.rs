@@ -1860,6 +1860,7 @@ pub(crate) async fn compile_package(
     with_unpublished_dependencies: bool,
     skip_dependency_verification: bool,
 ) -> Result<CompiledPackage, anyhow::Error> {
+    let current_dir = std::env::current_dir()?;
     let config = resolve_lock_file_path(build_config, Some(package_path))?;
     let run_bytecode_verifier = true;
     let print_diags_to_stderr = true;
@@ -1986,6 +1987,7 @@ pub(crate) async fn compile_package(
             error: format!("Failed to update Move.lock toolchain version: {e}"),
         })?;
 
+    std::env::set_current_dir(current_dir)?;
     Ok(compiled_package)
 }
 
